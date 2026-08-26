@@ -531,6 +531,11 @@ var ECOLOR  = ["var(--idle)","var(--warn)","var(--accent)","var(--info)","var(--
 var LS = "obliv-gyn-admin-v2";
 var LS_OLD = "obliv-gyn-setup-v1";
 var VAT = 0.1;
+/* 부가세는 원 단위 절사 (세금계산서 관행).
+   반올림하면 공급가 34,545,455 → VAT 3,454,545.5 → 3,454,546 이 되어
+   합계가 38,000,001 처럼 1원 어긋난다. */
+function vatOf(n){ return Math.floor(n * VAT); }
+function grossOf(n){ return Math.round(n) + vatOf(n); }
 
 /* ═══════════════ 유틸 ═══════════════ */
 function esc(s){
@@ -678,9 +683,9 @@ function renderKpis(){
     {lab:"확정 견적 접수", val:finalVs.length, unit:"/" + total,
      note: finalVs.length ? finalVs.map(function(v){return v.name;}).join(" · ") : "아직 확정 견적 없음"},
     finalSum > 0
-      ? {lab:"확정 견적 총액", val:won(finalSum * (1 + VAT)), unit:"",
+      ? {lab:"확정 견적 총액", val:won(grossOf(finalSum)), unit:"",
          note:"공급가 " + finalSum.toLocaleString("ko-KR") + " · VAT 포함"}
-      : {lab:"가견적 기준 참고액", val:won(draftSum * (1 + VAT)), unit:"",
+      : {lab:"가견적 기준 참고액", val:won(grossOf(draftSum)), unit:"",
          note:"확정 견적 접수 시 자동 전환"}
   ];
   document.getElementById("kpis").innerHTML = k.map(function(x){
@@ -752,7 +757,7 @@ function freeTable(t, vid, ti){
 
 function sumInner(label, n){
   return '<span>' + esc(label) + ' ' + n.toLocaleString("ko-KR") +
-    ' &nbsp;+&nbsp; VAT ' + Math.round(n*VAT).toLocaleString("ko-KR") + '</span><b>' + won(n*(1+VAT)) + '</b>';
+    ' &nbsp;+&nbsp; VAT ' + vatOf(n).toLocaleString("ko-KR") + '</span><b>' + won(grossOf(n)) + '</b>';
 }
 
 /* 숫자만 입력된 칸에만 천 단위 콤마를 넣는다 ("70,000 / 175,000" 같은 값은 건드리지 않음) */
@@ -791,7 +796,7 @@ function refreshExpRef(){
   var el = document.querySelector(".exprow-add .h");
   if (!el) return;
   var ref = data.vendors.filter(hasFinal).map(function(v){
-    return v.name + " " + Math.round(finalTotal(v) * (1+VAT)).toLocaleString("ko-KR") + "원";
+    return v.name + " " + grossOf(finalTotal(v)).toLocaleString("ko-KR") + "원";
   }).join(" · ");
   el.textContent = ref ? "확정 견적 참고 — " + ref : "확정 견적을 등록하면 여기에 청구 예정 금액이 참고값으로 표시됩니다";
 }
@@ -915,8 +920,8 @@ function renderAnalysis(){
   h += '<div class="antiles">' +
     '<div class="antile draft"><div class="l">가견적 공급가 합계</div><div class="v">' + won(dSum) + '</div></div>' +
     '<div class="antile"><div class="l">' + (anyFinal ? "확정 공급가 합계" : "확정 공급가 (미접수)") + '</div><div class="v">' + won(fSum) + '</div></div>' +
-    '<div class="antile"><div class="l">VAT (10%)</div><div class="v">' + won(baseSum * VAT) + '</div></div>' +
-    '<div class="antile total"><div class="l">' + (anyFinal ? "확정" : "가견적") + ' 기준 총액</div><div class="v">' + won(baseSum * (1+VAT)) + '</div></div>' +
+    '<div class="antile"><div class="l">VAT (10%)</div><div class="v">' + won(vatOf(baseSum)) + '</div></div>' +
+    '<div class="antile total"><div class="l">' + (anyFinal ? "확정" : "가견적") + ' 기준 총액</div><div class="v">' + won(grossOf(baseSum)) + '</div></div>' +
     '</div>';
 
   h += '<div class="tw"><table class="big"><thead><tr><th>거래처</th><th>견적 단계</th>' +
@@ -1069,7 +1074,7 @@ function renderExpenses(){
 
   /* 금액 입력을 돕는 확정 견적 참고값 */
   var ref = data.vendors.filter(hasFinal).map(function(v){
-    return v.name + " " + Math.round(finalTotal(v) * (1+VAT)).toLocaleString("ko-KR") + "원";
+    return v.name + " " + grossOf(finalTotal(v)).toLocaleString("ko-KR") + "원";
   }).join(" · ");
 
   h += '<div class="exprow-add"><button class="btn pri" id="expAdd">+ 지출결의서 추가</button>' +
