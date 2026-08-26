@@ -117,13 +117,17 @@ input[type="search"]{
 }
 input[type="search"]:focus{outline:2px solid var(--accent); outline-offset:-1px}
 
-.grid{display:grid; grid-template-columns:repeat(auto-fill,minmax(414px,1fr)); gap:14px; align-items:start}
+/* 같은 줄의 카드 높이를 맞춰 아래쪽 라인이 들쭉날쭉하지 않게 한다 */
+.grid{display:grid; grid-template-columns:repeat(auto-fill,minmax(414px,1fr)); gap:14px; align-items:stretch}
+.memo-blk{margin-top:auto}   /* 남는 공간은 메모칸 위로 밀어 카드 아래를 정렬 */
 .card{background:var(--panel); border:1px solid var(--line); border-radius:var(--radius); box-shadow:var(--shadow); display:flex; flex-direction:column; overflow:hidden}
 .card.hide{display:none}
 .card-h{padding:16px 18px 13px; border-bottom:1px solid var(--line-2)}
 .card-h .row1{display:flex; align-items:flex-start; justify-content:space-between; gap:10px}
 .vname{font-size:16px; font-weight:800; letter-spacing:-.02em; margin:0}
-.vcat{font-size:11.5px; color:var(--ink-3); font-weight:600; margin-top:3px}
+.vname .cell-in.vn{font-size:16px; font-weight:800; letter-spacing:-.02em; padding:2px 5px}
+.vcat{display:flex; align-items:center; gap:6px; margin-top:4px; min-width:0}
+.vcat .cell-in.vc{font-size:11.5px; color:var(--ink-3); font-weight:600; padding:2px 5px; flex:1; min-width:0}
 .status{
   border:1px solid transparent; border-radius:20px; padding:4px 11px; font-size:11.5px;
   font-weight:700; cursor:pointer; white-space:nowrap; font-family:inherit; flex-shrink:0;
@@ -398,13 +402,8 @@ footer{margin-top:40px; padding-top:18px; border-top:1px solid var(--line); font
   </section>
 
   <section>
-    <div class="sec-head"><h2>총금액 분석</h2><span class="hint">확정 견적이 등록되면 자동으로 확정 기준으로 전환됩니다</span></div>
+    <div class="sec-head"><h2>총금액 분석</h2><span class="hint">업체 카드의 확정 견적에 품목을 입력하면 여기에 자동 집계됩니다</span></div>
     <div class="panel" id="analysis"></div>
-  </section>
-
-  <section>
-    <div class="sec-head"><h2>전체 품목 · 단가 통합</h2><span class="hint">가견적 · 확정 견적 전체 자동 집계</span></div>
-    <div class="panel"><div class="tw"><table class="big" id="allTable"></table></div></div>
   </section>
 
   <section>
@@ -426,7 +425,7 @@ footer{margin-top:40px; padding-top:18px; border-top:1px solid var(--line); font
 
 /* ═══════════════ 초기 데이터 (원본 엑셀 기준) ═══════════════ */
 var DEFAULT_DATA = {
-  version:5,
+  version:6,
   meta:{
     clinic:"오블리브의원 서울오리진점",
     title:"부인과 초기 물품 · 업체 세팅 관리",
@@ -515,11 +514,16 @@ var DEFAULT_DATA = {
       placeholder:"담당 제품 · 견적 정보 없음 — 취급 품목 확인 후 가견적 요청 필요"
     },
     {
-      id:"ge", name:"GE", category:"품목 미정", status:0, quoteLabel:"", memo:"",
+      id:"ge", name:"GE", category:"품목 미정", status:1, quoteLabel:"", memo:"",
       finals:[], finalDate:"",
-      contacts:[{name:"미지정", role:"", tag:"", lines:["담당자 배정 필요"]}],
+      contacts:[{name:"황성규", role:"이사", tag:"", lines:[
+        "T. 032-326-0915",
+        "M. 010-6856-2398",
+        "E. well0982@naver.com",
+        "인천 서구 고산후로 222 푸리마더타워, 711~714호"
+      ]}],
       products:[], tables:[], notes:[],
-      placeholder:"담당자 · 제품 · 견적 정보 없음 — 컨택 채널 확보가 첫 액션"
+      placeholder:"담당 제품 · 견적 정보 없음 — 취급 품목 확인 후 가견적 요청 필요"
     }
   ],
   expenses:[]
@@ -576,6 +580,28 @@ function migrate(p){
       (v.products||[]).concat(v.finals||[]).forEach(function(x){ delete x.best; });
     });
     p.version = 5;
+  }
+  if (p.version < 6){
+    /* GE 담당자 등록 — 아직 '미지정' 상태인 경우에만 채운다 (직접 입력한 내용은 건드리지 않음) */
+    var ge = null;
+    p.vendors.forEach(function(v){ if (v.id === "ge") ge = v; });
+    if (ge){
+      var only = ge.contacts || [];
+      var untouched = only.length === 0 || (only.length === 1 && (!only[0].name || only[0].name === "미지정"));
+      if (untouched){
+        ge.contacts = [{name:"황성규", role:"이사", tag:"", lines:[
+          "T. 032-326-0915",
+          "M. 010-6856-2398",
+          "E. well0982@naver.com",
+          "인천 서구 고산후로 222 푸리마더타워, 711~714호"
+        ]}];
+        if (Number(ge.status) === 0) ge.status = 1;
+        if (!ge.placeholder || ge.placeholder.indexOf("컨택 채널") !== -1){
+          ge.placeholder = "담당 제품 · 견적 정보 없음 — 취급 품목 확인 후 가견적 요청 필요";
+        }
+      }
+    }
+    p.version = 6;
   }
   if (!Array.isArray(p.expenses)) p.expenses = [];
   p.vendors.forEach(function(v){
@@ -636,7 +662,7 @@ function vendorById(id){
 
 /* ═══════════════ 렌더 ═══════════════ */
 function render(){
-  renderMeta(); renderKpis(); renderPipe(); renderCards(); renderAnalysis(); renderAll(); renderExpenses();
+  renderMeta(); renderKpis(); renderPipe(); renderCards(); renderAnalysis(); renderExpenses();
   applyFilter();
 }
 
@@ -712,10 +738,11 @@ function renderPipe(){
 /* 품목 · 단가 · 수량 · 금액을 표에서 바로 고칠 수 있는 입력 칸 */
 function productsTable(ps, vid, list){
   ps = ps || [];
-  var h = '<div class="tw"><table class="q" style="min-width:372px"><thead><tr>' +
-    '<th style="min-width:82px">품목</th><th style="min-width:58px">규격</th>' +
-    '<th class="num" style="min-width:62px">단가</th><th class="num" style="min-width:52px">수량</th>' +
-    '<th class="num" style="min-width:76px">금액</th><th style="width:20px"></th></tr></thead><tbody>';
+  /* 품목명이 길어도 잘리지 않도록 비율로 폭을 배분한다 */
+  var h = '<div class="tw"><table class="q" style="min-width:392px;table-layout:fixed"><thead><tr>' +
+    '<th style="width:32%;min-width:112px">품목</th><th style="width:14%;min-width:52px">규격</th>' +
+    '<th class="num" style="width:17%;min-width:64px">단가</th><th class="num" style="width:12%;min-width:46px">수량</th>' +
+    '<th class="num" style="width:21%;min-width:82px">금액</th><th style="width:22px"></th></tr></thead><tbody>';
 
   ps.forEach(function(p,i){
     function c(f, ph, cls){
@@ -816,9 +843,12 @@ function renderCards(){
     var h = '<article class="card" data-id="' + esc(v.id) + '" data-stage="' + st +
       '" data-key="' + esc(key) + '">';
 
-    h += '<div class="card-h"><div class="row1"><div><h3 class="vname">' + esc(v.name) +
-      '<span class="qb ' + QB[st].cls + '">' + QB[st].txt + '</span></h3>' +
-      '<div class="vcat">' + esc(v.category || "—") + '</div></div>' +
+    h += '<div class="card-h"><div class="row1"><div style="flex:1;min-width:0">' +
+      '<h3 class="vname"><input class="cell-in vn" data-vid="' + esc(v.id) + '" data-vf="name" value="' +
+        esc(v.name) + '" placeholder="업체명"></h3>' +
+      '<div class="vcat"><span class="qb ' + QB[st].cls + '" style="margin:0">' + QB[st].txt + '</span>' +
+        '<input class="cell-in vc" data-vid="' + esc(v.id) + '" data-vf="category" value="' +
+        esc(v.category || "") + '" placeholder="분류 · 취급 품목 입력"></div></div>' +
       '<button class="status" data-s="' + Number(v.status) + '" data-id="' + esc(v.id) + '" title="클릭하면 다음 단계로 넘어갑니다">' +
       esc(LABELS[Number(v.status)]) + '</button></div>' +
       '<div class="card-tools">' +
@@ -885,7 +915,7 @@ function renderCards(){
       h += '<div class="gap">' + esc(v.placeholder) + '</div>';
     }
 
-    h += '<div><div class="blk-t">메모</div><textarea class="memo" data-id="' + esc(v.id) +
+    h += '<div class="memo-blk"><div class="blk-t">메모</div><textarea class="memo" data-id="' + esc(v.id) +
       '" placeholder="협의 내용 · 다음 액션 입력">' + esc(v.memo || "") + '</textarea></div>';
 
     return h + '</div></article>';
@@ -955,37 +985,6 @@ function renderAnalysis(){
   document.getElementById("analysis").innerHTML = h + '</tbody></table></div>';
 }
 
-function renderAll(){
-  var rows = [];
-  data.vendors.forEach(function(v){
-    (v.products||[]).forEach(function(p,i){ rows.push({v:v, p:p, i:i, list:"products", k:"가견적"}); });
-    (v.finals||[]).forEach(function(p,i){ rows.push({v:v, p:p, i:i, list:"finals", k:"확정"}); });
-  });
-  var h = '<thead><tr><th style="min-width:110px">거래처</th><th style="min-width:130px">품목</th>' +
-    '<th style="min-width:96px">규격</th><th style="min-width:92px">분류</th>' +
-    '<th class="num" style="min-width:92px">단가</th><th class="num" style="min-width:80px">수량</th>' +
-    '<th class="num" style="min-width:104px">금액</th>' +
-    '<th style="min-width:180px">조건</th></tr></thead><tbody>';
-  if (!rows.length){
-    h += '<tr><td colspan="8" class="muted" style="text-align:center;padding:26px">등록된 품목이 없습니다. 업체 카드에서 <b>+ 품목</b>으로 추가하세요.</td></tr>';
-  } else {
-    rows.forEach(function(r){
-      function c(f, ph, cls){
-        return '<input class="cell-in ' + (cls||"") + '" data-vid="' + esc(r.v.id) + '" data-list="' + r.list +
-          '" data-i="' + r.i + '" data-f="' + f + '" value="' + esc(r.p[f] || "") + '" placeholder="' + esc(ph) + '">';
-      }
-      h += '<tr><td><span class="vtag">' + esc(r.v.name) + '</span></td>' +
-        '<td>' + c("name","품목명","k") + '</td>' +
-        '<td>' + c("spec","규격") + '</td>' +
-        '<td>' + c("cat","분류") + '</td>' +
-        '<td>' + c("price","단가","num") + '</td>' +
-        '<td>' + c("qty","수량","num") + '</td>' +
-        '<td>' + c("amount","금액","num") + '</td>' +
-        '<td>' + c("cond","조건 · 비고") + '</td></tr>';
-    });
-  }
-  document.getElementById("allTable").innerHTML = h + "</tbody>";
-}
 
 function expVendorName(e){
   var v = vendorById(e.vendorId);
@@ -1350,6 +1349,13 @@ function cellWrite(el){
   var d = el.dataset;
   var v = vendorById(d.vid); if (!v) return;
 
+  if (d.vf){                                     /* 업체명 · 분류 */
+    v[d.vf] = el.value;
+    save();
+    /* 업체명은 여러 곳에 나오므로 카드를 뺀 나머지를 다시 그린다 (입력 중 커서 유지) */
+    renderKpis(); renderPipe(); renderAnalysis(); renderExpenses(); applyFilter();
+    return;
+  }
   if (d.ct !== undefined){                       /* 담당자 */
     var c = (v.contacts || [])[Number(d.ct)];
     if (!c) return;
@@ -1358,7 +1364,20 @@ function cellWrite(el){
   } else if (d.list){                            /* 품목 행 */
     var item = (v[d.list] || [])[Number(d.i)];
     if (!item) return;
+    var op = parseNum(item.price), oq = parseNum(item.qty), oa = parseNum(item.amount);
     item[d.f] = el.value;
+
+    /* 단가 · 수량을 넣으면 금액을 자동으로 채운다.
+       단, 사용자가 금액을 따로 고쳐둔 경우(수식과 어긋난 값)는 건드리지 않는다. */
+    if (d.f === "price" || d.f === "qty"){
+      var np = parseNum(item.price), nq = parseNum(item.qty);
+      var wasSynced = !String(item.amount || "").trim() || oa === op * oq;
+      if (np > 0 && nq > 0 && wasSynced){
+        item.amount = (np * nq).toLocaleString("ko-KR");
+        var amtSel = '.cell-in[data-vid="' + d.vid + '"][data-list="' + d.list + '"][data-i="' + d.i + '"][data-f="amount"]';
+        Array.prototype.forEach.call(document.querySelectorAll(amtSel), function(x){ x.value = item.amount; });
+      }
+    }
   } else if (d.t !== undefined){                 /* 추가 표 셀 */
     var t = (v.tables || [])[Number(d.t)];
     var row = t && t.rows[Number(d.r)];
@@ -1412,7 +1431,7 @@ document.addEventListener("click", function(e){
     var a = b.dataset.padd.split("|"), v1 = vendorById(a[0]);
     if (!v1) return;
     v1[a[1]].push({name:"", spec:"", cat:"", price:"", qty:"", amount:"", cond:""});
-    save(); renderCards(); renderAll(); renderKpis(); renderAnalysis(); refreshExpRef(); applyFilter();
+    save(); renderCards(); renderKpis(); renderAnalysis(); refreshExpRef(); applyFilter();
     var sel = '.cell-in[data-vid="' + a[0] + '"][data-list="' + a[1] + '"][data-i="' + (v1[a[1]].length-1) + '"][data-f="name"]';
     var inp = document.querySelector("#grid " + sel);
     if (inp){ inp.focus(); inp.scrollIntoView({block:"center"}); }
@@ -1425,7 +1444,7 @@ document.addEventListener("click", function(e){
     var nm = it && it.name ? '"' + it.name + '"' : "이";
     if (!confirm(nm + " 품목을 삭제할까요?")) return;
     v2[p[1]].splice(Number(p[2]), 1);
-    save(); renderCards(); renderAll(); renderKpis(); renderAnalysis(); refreshExpRef(); applyFilter();
+    save(); renderCards(); renderKpis(); renderAnalysis(); refreshExpRef(); applyFilter();
   }
 });
 
