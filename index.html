@@ -263,6 +263,8 @@ table.big .muted{color:var(--ink-3)}
 .cell-in::placeholder{color:var(--ink-3); opacity:.5; font-weight:400}
 .cell-in.num{text-align:right}
 .cell-in.k{font-weight:650}
+/* 부가세는 단가에서 자동 산정되는 값 — 입력칸이 아님을 색으로 구분 */
+.vatcell{color:var(--ink-3); font-variant-numeric:tabular-nums; font-size:12.5px; padding-right:4px !important}
 table.q td:last-child .cell-in{padding-right:2px}
 table.big .cell-in{font-size:13px; padding:4px 6px}
 
@@ -425,7 +427,7 @@ footer{margin-top:40px; padding-top:18px; border-top:1px solid var(--line); font
 
 /* ═══════════════ 초기 데이터 (원본 엑셀 기준) ═══════════════ */
 var DEFAULT_DATA = {
-  version:6,
+  version:7,
   meta:{
     clinic:"오블리브의원 서울오리진점",
     title:"부인과 초기 물품 · 업체 세팅 관리",
@@ -444,8 +446,8 @@ var DEFAULT_DATA = {
          lines:["T. 010-6244-5540","사업자번호 257-27-01316"]}
       ],
       products:[
-        {name:"라큐디", spec:"1.5ml", cat:"창상피복제", price:"20,000", qty:"100개", amount:"2,000,000", cond:"100개 견적 기준"},
-        {name:"베카겔", spec:"2.0ml · 1box=10개입", cat:"창상피복제", price:"66,000", qty:"10box", amount:"660,000", cond:"10box (1box=10개입)"}
+        {name:"라큐디", spec:"1.5ml", cat:"창상피복제", price:"20,000", qty:"100개", amount:"2,200,000", cond:"100개 견적 기준"},
+        {name:"베카겔", spec:"2.0ml · 1box=10개입", cat:"창상피복제", price:"66,000", qty:"10box", amount:"726,000", cond:"10box (1box=10개입)"}
       ],
       tables:[],
       notes:[
@@ -603,6 +605,19 @@ function migrate(p){
     }
     p.version = 6;
   }
+  if (p.version < 7){
+    /* 금액 표기를 공급가 → VAT 포함으로 전환.
+       기존 금액이 정확히 단가×수량(공급가)이던 행만 (단가+부가세)×수량으로 바꾼다. */
+    p.vendors.forEach(function(v){
+      (v.products||[]).concat(v.finals||[]).forEach(function(x){
+        var pr = parseNum(x.price), q = parseNum(x.qty), a = parseNum(x.amount);
+        if (pr > 0 && q > 0 && a === pr * q){
+          x.amount = ((pr + Math.floor(pr * VAT)) * q).toLocaleString("ko-KR");
+        }
+      });
+    });
+    p.version = 7;
+  }
   if (!Array.isArray(p.expenses)) p.expenses = [];
   p.vendors.forEach(function(v){
     if (!Array.isArray(v.finals)) v.finals = [];
@@ -677,11 +692,21 @@ function renderMeta(){
     esc(m.footnote) + "<br>데이터는 이 파일을 연 브라우저에만 저장됩니다. 다른 PC로 옮기거나 백업하려면 상단의 <b>백업 내보내기</b> / <b>불러오기</b>를 사용하세요.";
 }
 
-function sumAmt(list){
-  return (list || []).reduce(function(s,p){ return s + parseNum(p.amount); }, 0);
+/* 금액(amount) = VAT 포함 가격. 공급가는 단가×수량으로 되짚어 계산한다. */
+function rowGross(p){ return parseNum(p.amount); }
+function rowSupply(p){
+  var pr = parseNum(p.price), q = parseNum(p.qty);
+  if (pr > 0 && q > 0) return pr * q;
+  var g = parseNum(p.amount);
+  return g ? Math.round(g / (1 + VAT)) : 0;   /* 금액만 있는 경우 역산 */
 }
-function draftTotal(v){ return sumAmt(v.products); }
-function finalTotal(v){ return sumAmt(v.finals); }
+function listGross(list){ return (list||[]).reduce(function(s,p){ return s + rowGross(p); }, 0); }
+function listSupply(list){ return (list||[]).reduce(function(s,p){ return s + rowSupply(p); }, 0); }
+
+function draftTotal(v){ return listGross(v.products); }   /* VAT 포함 총액 */
+function finalTotal(v){ return listGross(v.finals); }
+function draftSupply(v){ return listSupply(v.products); }
+function finalSupply(v){ return listSupply(v.finals); }
 function hasDraft(v){ return (v.products||[]).length > 0; }
 function hasFinal(v){ return (v.finals||[]).length > 0; }
 /* 견적 단계: 2=확정, 1=가견적, 0=미접수 */
@@ -697,8 +722,10 @@ function renderKpis(){
   }).map(function(v){ return v.name; });
 
   var draftVs = vs.filter(hasDraft), finalVs = vs.filter(hasFinal);
-  var draftSum = vs.reduce(function(s,v){ return s + draftTotal(v); }, 0);
+  var draftSum = vs.reduce(function(s,v){ return s + draftTotal(v); }, 0);   /* VAT 포함 */
   var finalSum = vs.reduce(function(s,v){ return s + finalTotal(v); }, 0);
+  var draftSup = vs.reduce(function(s,v){ return s + draftSupply(v); }, 0);
+  var finalSup = vs.reduce(function(s,v){ return s + finalSupply(v); }, 0);
 
   var k = [
     {lab:"등록 거래처", val:total, unit:"곳", note:"부인과 세팅 대상 전체"},
@@ -709,10 +736,14 @@ function renderKpis(){
     {lab:"확정 견적 접수", val:finalVs.length, unit:"/" + total,
      note: finalVs.length ? finalVs.map(function(v){return v.name;}).join(" · ") : "아직 확정 견적 없음"},
     finalSum > 0
-      ? {lab:"확정 견적 총액", val:won(grossOf(finalSum)), unit:"",
-         note:"공급가 " + finalSum.toLocaleString("ko-KR") + " · VAT 포함"}
-      : {lab:"가견적 기준 참고액", val:won(grossOf(draftSum)), unit:"",
-         note:"확정 견적 접수 시 자동 전환"}
+      ? {lab:"확정 견적 총액", val:won(finalSum), unit:"",
+         note:"공급가 " + Math.round(finalSup).toLocaleString("ko-KR") +
+              " + VAT " + Math.round(finalSum - finalSup).toLocaleString("ko-KR")}
+      : {lab:"가견적 기준 참고액", val:won(draftSum), unit:"",
+         note: draftSum > 0
+           ? "공급가 " + Math.round(draftSup).toLocaleString("ko-KR") +
+             " + VAT " + Math.round(draftSum - draftSup).toLocaleString("ko-KR")
+           : "확정 견적 접수 시 자동 전환"}
   ];
   document.getElementById("kpis").innerHTML = k.map(function(x){
     return '<div class="kpi"><div class="lab">' + esc(x.lab) + '</div><div class="val">' + esc(x.val) +
@@ -739,25 +770,31 @@ function renderPipe(){
 function productsTable(ps, vid, list){
   ps = ps || [];
   /* 품목명이 길어도 잘리지 않도록 비율로 폭을 배분한다 */
-  var h = '<div class="tw"><table class="q" style="min-width:392px;table-layout:fixed"><thead><tr>' +
-    '<th style="width:32%;min-width:112px">품목</th><th style="width:14%;min-width:52px">규격</th>' +
-    '<th class="num" style="width:17%;min-width:64px">단가</th><th class="num" style="width:12%;min-width:46px">수량</th>' +
-    '<th class="num" style="width:21%;min-width:82px">금액</th><th style="width:22px"></th></tr></thead><tbody>';
+  var h = '<div class="tw"><table class="q" style="min-width:470px;table-layout:fixed"><thead><tr>' +
+    '<th style="width:26%;min-width:100px">품목</th><th style="width:11%;min-width:48px">규격</th>' +
+    '<th class="num" style="width:16%;min-width:64px">단가</th>' +
+    '<th class="num" style="width:14%;min-width:60px">부가세</th>' +
+    '<th class="num" style="width:10%;min-width:44px">수량</th>' +
+    '<th class="num" style="width:21%;min-width:88px">금액<span style="font-weight:400">(VAT 포함)</span></th>' +
+    '<th style="width:22px"></th></tr></thead><tbody>';
 
   ps.forEach(function(p,i){
     function c(f, ph, cls){
       return '<input class="cell-in ' + (cls||"") + '" data-vid="' + esc(vid) + '" data-list="' + list +
         '" data-i="' + i + '" data-f="' + f + '" value="' + esc(p[f] || "") + '" placeholder="' + esc(ph) + '">';
     }
+    var uv = vatOf(parseNum(p.price));
     h += '<tr><td>' + c("name","품목명","k") + '</td>' +
       '<td>' + c("spec","규격") + '</td>' +
       '<td>' + c("price","단가","num") + '</td>' +
+      '<td class="num vatcell" data-vatfor="' + esc(vid) + '|' + list + '|' + i + '">' +
+        (uv ? uv.toLocaleString("ko-KR") : "—") + '</td>' +
       '<td>' + c("qty","수량","num") + '</td>' +
       '<td>' + c("amount","금액","num") + '</td>' +
       '<td><button class="btn sm dgr" style="padding:2px 6px" data-prow="' + esc(vid) + '|' + list + '|' + i + '" title="이 품목 삭제">×</button></td></tr>';
   });
   if (!ps.length){
-    h += '<tr><td colspan="6" style="color:var(--ink-3);padding:10px 0;font-size:12px">아래 <b>+ 품목</b>으로 추가하세요.</td></tr>';
+    h += '<tr><td colspan="7" style="color:var(--ink-3);padding:10px 0;font-size:12px">아래 <b>+ 품목</b>으로 추가하세요.</td></tr>';
   }
   h += '</tbody></table></div>' +
     '<div style="margin-top:7px"><button class="btn sm" data-padd="' + esc(vid) + '|' + list + '">+ 품목</button></div>';
@@ -782,9 +819,10 @@ function freeTable(t, vid, ti){
   return h + '</tbody></table></div></div>';
 }
 
-function sumInner(label, n){
-  return '<span>' + esc(label) + ' ' + n.toLocaleString("ko-KR") +
-    ' &nbsp;+&nbsp; VAT ' + vatOf(n).toLocaleString("ko-KR") + '</span><b>' + won(grossOf(n)) + '</b>';
+function sumInner(label, supply, gross){
+  return '<span>' + esc(label) + ' ' + Math.round(supply).toLocaleString("ko-KR") +
+    ' &nbsp;+&nbsp; VAT ' + Math.round(gross - supply).toLocaleString("ko-KR") +
+    '</span><b>' + won(gross) + '</b>';
 }
 
 /* 숫자만 입력된 칸에만 천 단위 콤마를 넣는다 ("70,000 / 175,000" 같은 값은 건드리지 않음) */
@@ -811,11 +849,12 @@ function mirrorCell(el){
 /* 카드 안의 합계 줄만 제자리에서 갱신 — 입력 중인 칸을 잃지 않도록 */
 function syncVendorSums(){
   data.vendors.forEach(function(v){
-    [["sum-d-", draftTotal(v), "가견적 공급가"], ["sum-f-", finalTotal(v), "확정 공급가"]].forEach(function(x){
+    [["sum-d-", draftSupply(v), draftTotal(v), "가견적 공급가"],
+     ["sum-f-", finalSupply(v), finalTotal(v), "확정 공급가"]].forEach(function(x){
       var el = document.getElementById(x[0] + v.id);
       if (!el) return;
-      el.innerHTML = sumInner(x[2], x[1]);
-      el.style.display = x[1] > 0 ? "" : "none";
+      el.innerHTML = sumInner(x[3], x[1], x[2]);
+      el.style.display = x[2] > 0 ? "" : "none";
     });
   });
 }
@@ -823,7 +862,7 @@ function refreshExpRef(){
   var el = document.querySelector(".exprow-add .h");
   if (!el) return;
   var ref = data.vendors.filter(hasFinal).map(function(v){
-    return v.name + " " + grossOf(finalTotal(v)).toLocaleString("ko-KR") + "원";
+    return v.name + " " + finalTotal(v).toLocaleString("ko-KR") + "원";
   }).join(" · ");
   el.textContent = ref ? "확정 견적 참고 — " + ref : "확정 견적을 등록하면 여기에 청구 예정 금액이 참고값으로 표시됩니다";
 }
@@ -837,6 +876,7 @@ var QB = [
 function renderCards(){
   document.getElementById("grid").innerHTML = data.vendors.map(function(v, idx){
     var dSum = draftTotal(v), fSum = finalTotal(v), st = quoteStage(v);
+    var dSup = draftSupply(v), fSup = finalSupply(v);
     var key = [v.name, v.category, (v.contacts||[]).map(function(c){return c.name + " " + c.role;}).join(" "),
       (v.products||[]).concat(v.finals||[]).map(function(p){return p.name + " " + p.spec + " " + p.cat;}).join(" ")].join(" ").toLowerCase();
 
@@ -883,14 +923,14 @@ function renderCards(){
     h += '<div><div class="blk-t">' + esc(v.quoteLabel || "가견적 · 단가") + '</div>' +
       productsTable(v.products, v.id, "products") + '</div>';
     h += '<div class="sumline" id="sum-d-' + esc(v.id) + '"' + (dSum > 0 ? '' : ' style="display:none"') + '>' +
-      sumInner("가견적 공급가", dSum) + '</div>';
+      sumInner("가견적 공급가", dSup, dSum) + '</div>';
 
     /* ② 확정 견적 */
     h += '<div class="finbox"><div class="blk-t">확정 견적' +
       (v.finalDate ? ' · ' + esc(v.finalDate) : '') + '</div>' +
       productsTable(v.finals, v.id, "finals") +
       '<div class="sumline fin" id="sum-f-' + esc(v.id) + '" style="margin-top:11px;margin-bottom:8px' +
-      (fSum > 0 ? '' : ';display:none') + '">' + sumInner("확정 공급가", fSum) + '</div>' +
+      (fSum > 0 ? '' : ';display:none') + '">' + sumInner("확정 공급가", fSup, fSum) + '</div>' +
       (fSum > 0 ? '' : '<div style="height:8px"></div>') + '</div>';
 
     /* ③ 지출결의서 */
@@ -928,14 +968,20 @@ function renderAnalysis(){
   var allFinal = vs.filter(hasDraft).length > 0 && vs.filter(hasDraft).every(hasFinal);
   var finalCnt = vs.filter(hasFinal).length;
 
-  var rows = vs.map(function(v){ return {v:v, d:draftTotal(v), f:finalTotal(v)}; })
+  /* d · f 는 VAT 포함 금액, ds · fs 는 공급가 */
+  var rows = vs.map(function(v){
+                 return {v:v, d:draftTotal(v), f:finalTotal(v), ds:draftSupply(v), fs:finalSupply(v)};
+               })
                .filter(function(r){ return r.d > 0 || r.f > 0; });
   var dSum = rows.reduce(function(s,r){ return s + r.d; }, 0);
   var fSum = rows.reduce(function(s,r){ return s + r.f; }, 0);
+  var dSup = rows.reduce(function(s,r){ return s + r.ds; }, 0);
+  var fSup = rows.reduce(function(s,r){ return s + r.fs; }, 0);
 
   /* 확정 견적이 하나라도 있으면 확정 기준, 아니면 가견적 기준 */
   var base = anyFinal ? "final" : "draft";
   var baseSum = anyFinal ? fSum : dSum;
+  var baseSup = anyFinal ? fSup : dSup;
 
   var msg = anyFinal
     ? (allFinal
@@ -948,14 +994,17 @@ function renderAnalysis(){
     (anyFinal ? "확정 " + finalCnt + "/" + vs.filter(hasDraft).length : "가견적 단계") + '</span></div>';
 
   h += '<div class="antiles">' +
-    '<div class="antile draft"><div class="l">가견적 공급가 합계</div><div class="v">' + won(dSum) + '</div></div>' +
-    '<div class="antile"><div class="l">' + (anyFinal ? "확정 공급가 합계" : "확정 공급가 (미접수)") + '</div><div class="v">' + won(fSum) + '</div></div>' +
-    '<div class="antile"><div class="l">VAT (10%)</div><div class="v">' + won(vatOf(baseSum)) + '</div></div>' +
-    '<div class="antile total"><div class="l">' + (anyFinal ? "확정" : "가견적") + ' 기준 총액</div><div class="v">' + won(grossOf(baseSum)) + '</div></div>' +
+    '<div class="antile draft"><div class="l">가견적 합계 (VAT 포함)</div><div class="v">' + won(dSum) + '</div></div>' +
+    '<div class="antile"><div class="l">' + (anyFinal ? "확정 합계 (VAT 포함)" : "확정 견적 (미접수)") + '</div><div class="v">' + won(fSum) + '</div></div>' +
+    '<div class="antile"><div class="l">공급가 / VAT</div><div class="v" style="font-size:15px">' +
+      Math.round(baseSup).toLocaleString("ko-KR") + '<span style="color:var(--ink-3)"> / </span>' +
+      Math.round(baseSum - baseSup).toLocaleString("ko-KR") + '</div></div>' +
+    '<div class="antile total"><div class="l">' + (anyFinal ? "확정" : "가견적") + ' 기준 총액 (VAT 포함)</div><div class="v">' + won(baseSum) + '</div></div>' +
     '</div>';
 
   h += '<div class="tw"><table class="big"><thead><tr><th>거래처</th><th>견적 단계</th>' +
-    '<th class="num">가견적 금액</th><th class="num">확정 금액</th><th class="num">차액</th><th>비중</th></tr></thead><tbody>';
+    '<th class="num">가견적 금액</th><th class="num">확정 금액</th><th class="num">차액</th><th>비중</th></tr></thead>' +
+    '<tbody><tr><td colspan="6" class="muted" style="padding:7px 14px;font-size:11.5px;border-bottom:1px solid var(--line-2)">금액은 모두 VAT 포함 기준</td></tr>';
 
   if (!rows.length){
     h += '<tr><td colspan="6" class="muted" style="text-align:center;padding:26px">금액이 입력된 견적이 없습니다.</td></tr>';
@@ -975,7 +1024,7 @@ function renderAnalysis(){
           '" style="width:' + Math.max(0, Math.min(100, pct)).toFixed(1) + '%"></div></div>' +
           '<span class="pct">' + pct.toFixed(1) + '%</span></div></td></tr>';
     });
-    h += '<tr style="background:var(--panel-2)"><td colspan="2"><b>합계 (공급가)</b></td>' +
+    h += '<tr style="background:var(--panel-2)"><td colspan="2"><b>합계 (VAT 포함)</b></td>' +
       '<td class="num"><b>' + dSum.toLocaleString("ko-KR") + '</b></td>' +
       '<td class="num"><b>' + (fSum ? fSum.toLocaleString("ko-KR") : "—") + '</b></td>' +
       '<td class="num">' + ((fSum && dSum) ? '<span class="delta ' + (fSum-dSum > 0 ? "up" : "down") + '">' +
@@ -1073,7 +1122,7 @@ function renderExpenses(){
 
   /* 금액 입력을 돕는 확정 견적 참고값 */
   var ref = data.vendors.filter(hasFinal).map(function(v){
-    return v.name + " " + grossOf(finalTotal(v)).toLocaleString("ko-KR") + "원";
+    return v.name + " " + finalTotal(v).toLocaleString("ko-KR") + "원";
   }).join(" · ");
 
   h += '<div class="exprow-add"><button class="btn pri" id="expAdd">+ 지출결의서 추가</button>' +
@@ -1137,7 +1186,7 @@ function productItem(p){
   return '<div class="item" data-item="product">' +
     '<div class="ih"><b>가견적 품목</b><span class="sp" style="flex:1"></span><button class="btn sm dgr" data-rm="1">삭제</button></div>' +
     '<div class="fr c3">' + fld("품명","name",p.name) + fld("규격","spec",p.spec) + fld("분류","cat",p.cat) + '</div>' +
-    '<div class="fr c3">' + fld("기준 단가","price",p.price) + fld("수량","qty",p.qty) + fld("금액","amount",p.amount,"가견적 참고 금액") + '</div>' +
+    '<div class="fr c3">' + fld("기준 단가","price",p.price) + fld("수량","qty",p.qty) + fld("금액 (VAT 포함)","amount",p.amount,"단가×수량으로 자동 계산됩니다") + '</div>' +
     '<div class="fr">' + fld("조건","cond",p.cond) + '</div>' +
     '</div>';
 }
@@ -1146,7 +1195,7 @@ function finalItem(p){
   return '<div class="item" data-item="final" style="border-color:var(--ok)">' +
     '<div class="ih"><b style="color:var(--ok)">확정 품목</b><span class="sp" style="flex:1"></span><button class="btn sm dgr" data-rm="1">삭제</button></div>' +
     '<div class="fr c3">' + fld("품명","name",p.name) + fld("규격","spec",p.spec) + fld("분류","cat",p.cat) + '</div>' +
-    '<div class="fr c3">' + fld("확정 단가","price",p.price) + fld("확정 수량","qty",p.qty) + fld("확정 금액","amount",p.amount,"총금액 분석에 집계됩니다") + '</div>' +
+    '<div class="fr c3">' + fld("확정 단가","price",p.price) + fld("확정 수량","qty",p.qty) + fld("확정 금액 (VAT 포함)","amount",p.amount,"총금액 분석에 집계됩니다") + '</div>' +
     '<div class="fr">' + fld("조건 / 비고","cond",p.cond) + '</div>' +
     '</div>';
 }
@@ -1367,13 +1416,20 @@ function cellWrite(el){
     var op = parseNum(item.price), oq = parseNum(item.qty), oa = parseNum(item.amount);
     item[d.f] = el.value;
 
-    /* 단가 · 수량을 넣으면 금액을 자동으로 채운다.
+    /* 단가를 넣으면 옆 칸 부가세(단가의 10%)를 다시 계산해 보여준다 */
+    if (d.f === "price"){
+      var vc = document.querySelector('.vatcell[data-vatfor="' + d.vid + '|' + d.list + '|' + d.i + '"]');
+      var uv = vatOf(parseNum(item.price));
+      if (vc) vc.textContent = uv ? uv.toLocaleString("ko-KR") : "—";
+    }
+
+    /* 금액 = (단가 + 부가세) × 수량, 즉 VAT 포함 가격을 자동으로 채운다.
        단, 사용자가 금액을 따로 고쳐둔 경우(수식과 어긋난 값)는 건드리지 않는다. */
     if (d.f === "price" || d.f === "qty"){
       var np = parseNum(item.price), nq = parseNum(item.qty);
-      var wasSynced = !String(item.amount || "").trim() || oa === op * oq;
+      var wasSynced = !String(item.amount || "").trim() || oa === (op + vatOf(op)) * oq;
       if (np > 0 && nq > 0 && wasSynced){
-        item.amount = (np * nq).toLocaleString("ko-KR");
+        item.amount = ((np + vatOf(np)) * nq).toLocaleString("ko-KR");
         var amtSel = '.cell-in[data-vid="' + d.vid + '"][data-list="' + d.list + '"][data-i="' + d.i + '"][data-f="amount"]';
         Array.prototype.forEach.call(document.querySelectorAll(amtSel), function(x){ x.value = item.amount; });
       }
