@@ -120,6 +120,17 @@ input[type="search"]:focus{outline:2px solid var(--accent); outline-offset:-1px}
 /* 같은 줄의 카드 높이를 맞춰 아래쪽 라인이 들쭉날쭉하지 않게 한다 */
 .grid{display:grid; grid-template-columns:repeat(auto-fill,minmax(560px,1fr)); gap:14px; align-items:stretch}
 .memo-blk{margin-top:auto}   /* 남는 공간은 메모칸 위로 밀어 카드 아래를 정렬 */
+/* 목록 끝의 업체 추가 타일 */
+.addcard{
+  align-self:start; min-height:190px; width:100%;
+  display:flex; flex-direction:column; align-items:center; justify-content:center; gap:5px;
+  background:var(--panel); border:2px dashed var(--line); border-radius:var(--radius);
+  color:var(--ink-3); font-family:inherit; cursor:pointer; padding:26px 20px; text-align:center;
+}
+.addcard:hover{border-color:var(--accent); background:var(--accent-soft); color:var(--accent-ink)}
+.addcard .plus{font-size:26px; font-weight:300; line-height:1}
+.addcard .t{font-size:14px; font-weight:750}
+.addcard .d{font-size:11.5px; font-weight:500; opacity:.85; max-width:260px; line-height:1.5}
 .card{background:var(--panel); border:1px solid var(--line); border-radius:var(--radius); box-shadow:var(--shadow); display:flex; flex-direction:column; overflow:hidden}
 .card.hide{display:none}
 .card-h{padding:16px 18px 13px; border-bottom:1px solid var(--line-2)}
@@ -354,7 +365,7 @@ footer{margin-top:40px; padding-top:18px; border-top:1px solid var(--line); font
     <span class="brand">부인과 세팅 관리자</span>
     <button class="btn" id="adminBtn">관리자 모드</button>
     <span class="adminonly" style="display:none"></span>
-    <button class="btn adminonly" id="addVendorBtn">+ 업체 추가</button>
+    <button class="btn pri" id="addVendorBtn">+ 업체 추가</button>
     <button class="btn adminonly" id="editMetaBtn">문서 정보</button>
     <span class="sp"></span>
     <span class="saved" id="savedTag">자동 저장됨</span>
@@ -998,7 +1009,12 @@ function renderCards(){
       '" placeholder="협의 내용 · 다음 액션 입력">' + esc(v.memo || "") + '</textarea></div>';
 
     return h + '</div></article>';
-  }).join("");
+  }).join("")
+  /* 목록 끝에 업체 추가 타일 — 관리자 모드 없이도 바로 추가할 수 있게 */
+  + '<button class="addcard" id="addVendorTile">' +
+      '<span class="plus">+</span><span class="t">업체 추가</span>' +
+      '<span class="d">거래처명 · 담당자 · 견적을 카드에서 바로 입력합니다</span>' +
+    '</button>';
 }
 
 function renderAnalysis(){
@@ -1635,7 +1651,22 @@ document.getElementById("adminBtn").addEventListener("click", function(){
     el.style.display = on ? "inline-flex" : "none";
   });
 });
-document.getElementById("addVendorBtn").addEventListener("click", function(){ openVendor(null); });
+/* 업체 추가 — 빈 카드를 만들고 업체명 칸에 바로 커서를 놓는다 */
+function addVendorInline(){
+  var v = {
+    id: uid("v"), name:"", category:"", status:0, quoteLabel:"", memo:"",
+    contacts:[{name:"", role:"", tag:"", lines:[]}],
+    products:[], finals:[], finalDate:"", tables:[], notes:[], placeholder:""
+  };
+  data.vendors.push(v);
+  save(); render();
+  var el = document.querySelector('#grid .cell-in[data-vid="' + v.id + '"][data-vf="name"]');
+  if (el){ el.focus(); el.scrollIntoView({block:"center", behavior:"smooth"}); }
+}
+document.getElementById("addVendorBtn").addEventListener("click", addVendorInline);
+document.getElementById("grid").addEventListener("click", function(e){
+  if (e.target.closest("#addVendorTile")) addVendorInline();
+});
 document.getElementById("editMetaBtn").addEventListener("click", openMeta);
 
 document.getElementById("exportBtn").addEventListener("click", function(){
